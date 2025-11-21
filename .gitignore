@@ -134,3 +134,6 @@ gunicorn.conf.py
 # except commands and skills
 !.claude/commands/
 !.claude/skills/
+
+# Cursor
+.cursor/mcp.json
