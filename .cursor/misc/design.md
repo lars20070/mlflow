@@ -125,6 +125,156 @@ examples/evaluation/                               # Evaluation examples
 - Contains legacy `Evaluation` and `EvaluationEntity` classes
 - New code should use `mlflow.entities.assessment` instead
 
+## GenAI Evaluation Framework Analysis
+
+### Main Classes
+
+**Core Evaluation Classes:**
+- `evaluate()` - Main entry point function in `base.py`
+- `harness.run()` - Evaluation harness orchestrator that runs predictions and scoring in parallel
+- `EvalItem` (dataclass) - Represents a single row in the evaluation dataset with inputs, outputs, expectations, trace
+- `EvalResult` (dataclass) - Holds evaluation result for a single eval item including assessments
+- `EvaluationResult` (dataclass) - Final evaluation result containing run_id, aggregated metrics, and result DataFrame
+
+**Context Management:**
+- `Context` (ABC) - Abstract base class for execution context
+- `RealContext` (Context) - Actual context implementation providing MLflow run/experiment access
+- `NoneContext` (Context) - Null context for testing
+
+**Scorer Classes:**
+- `Scorer` (BaseModel) - Base class for all scorers with name, aggregations, description
+- `BuiltInScorer` (Judge) - Base class for built-in scorers (Correctness, Safety, etc.)
+- Built-in scorer implementations: `Correctness`, `Safety`, `RetrievalRelevance`, `RetrievalSufficiency`, `RetrievalGroundedness`, `Guidelines`, `Equivalence`, `RelevanceToQuery`
+
+**Judge Classes:**
+- `Judge` (Scorer) - Base class for LLM-based judges, extends Scorer
+- `BuiltinJudge` - Built-in judge implementation
+- `AlignmentOptimizer` (ABC) - Abstract base for judge optimizers
+
+**Supporting Entities:**
+- `Trace` - MLflow trace entity (from `mlflow.entities`)
+- `Assessment`, `Feedback`, `Expectation` - Assessment entities (from `mlflow.entities.assessment`)
+
+### Component Relationships
+
+```mermaid
+classDiagram
+    class evaluate {
+        +evaluate(data, scorers, predict_fn, model_id) EvaluationResult
+        +to_predict_fn(endpoint_uri) Callable
+    }
+    
+    class harness {
+        +run(eval_df, predict_fn, scorers, run_id) EvaluationResult
+        -_run_single(eval_item, scorers, run_id, predict_fn) EvalResult
+        -_compute_eval_scores(eval_item, scorers) list[Feedback]
+        -_log_assessments(run_id, trace, assessments) Trace
+    }
+    
+    class EvalItem {
+        +request_id: str
+        +inputs: dict[str, Any]
+        +outputs: Any
+        +expectations: dict[str, Any]
+        +tags: dict[str, str] | None
+        +trace: Trace | None
+        +error_message: str | None
+        +from_dataset_row(row) EvalItem
+        +get_expectation_assessments() list[Expectation]
+    }
+    
+    class EvalResult {
+        +eval_item: EvalItem
+        +assessments: list[Feedback]
+        +eval_error: str | None
+        +to_pd_series() pd.Series
+        +get_assessments_dict() dict
+    }
+    
+    class EvaluationResult {
+        +run_id: str
+        +metrics: dict[str, float]
+        +result_df: pd.DataFrame
+    }
+    
+    class Context {
+        <<abstract>>
+        +get_mlflow_experiment_id() str | None
+        +get_mlflow_run_id() str | None
+        +get_user_name() str
+    }
+    
+    class RealContext {
+        -_run_id: str
+        -_context_tags: dict
+        +set_mlflow_run_id(run_id)
+    }
+    
+    class NoneContext {
+        +get_mlflow_experiment_id() None
+        +get_mlflow_run_id() None
+        +get_user_name() None
+    }
+    
+    class Scorer {
+        +name: str
+        +aggregations: list | None
+        +description: str | None
+        +run(*, inputs, outputs, expectations, trace) Any
+    }
+    
+    class Judge {
+        +instructions: str
+        +get_input_fields() list[JudgeField]
+        +get_output_fields() list[JudgeField]
+        +run(*, inputs, outputs, expectations, trace) Any
+    }
+    
+    class BuiltInScorer {
+        +name: str
+        +required_columns: set[str]
+        +instructions: str
+        +run(*, inputs, outputs, expectations, trace) Any
+    }
+    
+    class Trace {
+        +info: TraceInfo
+        +data: TraceData
+    }
+    
+    class Feedback {
+        +name: str
+        +value: Any
+        +rationale: str
+        +error: AssessmentError
+    }
+    
+    class Expectation {
+        +name: str
+        +value: Any
+        +source: AssessmentSource
+    }
+    
+    evaluate --> harness : calls
+    harness --> EvalItem : creates from DataFrame
+    harness --> EvalResult : creates via _run_single
+    harness --> EvaluationResult : returns
+    harness --> Scorer : uses
+    harness --> Trace : logs to
+    harness --> Context : uses
+    EvalItem --> Trace : contains
+    EvalItem --> Expectation : generates
+    EvalResult --> EvalItem : contains
+    EvalResult --> Feedback : contains
+    EvaluationResult --> EvalResult : aggregates
+    Context <|-- RealContext
+    Context <|-- NoneContext
+    Scorer <|-- Judge
+    Judge <|-- BuiltInScorer
+    Scorer --> Feedback : produces
+    Judge --> Feedback : produces
+```
+
 ## Examples
 - Location: `examples/evaluation/`
 - Contains examples for both traditional and GenAI evaluation
